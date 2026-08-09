@@ -1,1 +1,29 @@
-# Unity-EditorTools-and-Modules
+# Unity Editor Tools & UI Modules
+
+本プロジェクトは、Unity開発におけるUIの演出強化や、エディタ上での作業効率化（ワークフロー改善）を目的とした4つのカスタムスクリプト群です[cite: 1, 2, 3, 4]。
+
+## 収録スクリプト一覧と機能概要
+
+### 1. `UISfHighlightController.cs` (UI演出制御)[cite: 1]
+ボタンの選択時やポインターのホバー時に、動的な視覚エフェクトを追加するUIコンポーネントです[cite: 1]。
+*   ボタンの周囲を周回する光の玉（パーティクル）の演出を実装しています[cite: 1]。
+*   サイン波の計算を利用して、外周グラフィックの透明度をパルス明滅させ、スケールを微細に拡大・縮小させるアニメーション効果を持っています[cite: 1]。
+*   `ISelectHandler` や `IPointerEnterHandler` などのインターフェースを活用し、イベント駆動でハイライトエフェクトの再生・停止を制御します[cite: 1]。
+
+### 2. `ButtonColorCopier.cs` (エディタ拡張)[cite: 2]
+Unity UIのボタンに対するコンテキストメニュー（右クリックメニュー）を拡張するエディタ用スクリプトです[cite: 2]。
+*   対象のボタンから `ColorBlock`（Color Tintの設定値）をクリップボードにコピーすることができます[cite: 2]。
+*   コピーした色設定のみを、別のボタンへ個別にペーストして適用することが可能です[cite: 2]。
+*   ペースト処理には `Undo.RecordObject` が組み込まれており、適用後にCtrl+Zでの取り消し（Undo）に対応しています[cite: 2]。
+
+### 3. `PlayModeTransformSaver.cs` (エディタ拡張)[cite: 3]
+Playモード中に微調整したオブジェクトのトランスフォーム情報を記憶し、Editモード復帰時に失われないように自動復元する作業効率化ツールです[cite: 3]。
+*   ショートカットキー（`%_S`）を実行することで、選択中のオブジェクトの現在位置を保存してPlayモードを停止します[cite: 3]。
+*   通常の3Dオブジェクトの `Transform` だけでなく、UI要素である `RectTransform`（`anchoredPosition` や `sizeDelta` など）のパラメーター保存にも対応しています[cite: 3]。
+*   オブジェクトの追跡には階層パスではなく、Unity内部の一意なID（`InstanceID`）を使用しているため、非アクティブ状態のオブジェクトであっても確実に見つけ出して復元します[cite: 3]。
+
+### 4. `ButtonColorSyncEditor.cs` (UIカスタムエディタ)[cite: 4]
+ボタンコンポーネントのインスペクターを拡張し、Playモード中にボタンの状態に合わせてテキスト色を自動同期させるスクリプトです[cite: 4]。
+*   ボタンの選択状態（Normal、Highlighted、Pressedなど）が変化した際、指定された対象色へ子要素のテキスト色をクロスフェードさせます[cite: 4]。
+*   `TextMeshProUGUI` および旧式の `Text` コンポーネントの両方を検知して対応します[cite: 4]。
+*   特定のコンポーネント（`ButtonBlinkHover` や `ButtonTimeOutLock`）がボタンにアタッチされている場合は、競合を避けるために色のエディタ同期処理を自動的にスキップします[cite: 4]。
