@@ -1,133 +1,147 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using UnityEditor;
+using UnityEditorInternal;
 using UnityEngine;
-#if ENABLE_INPUT_SYSTEM
-using UnityEngine.InputSystem;
+#if UNITY_EDITOR_WIN
+using System.Runtime.InteropServices;
 #endif
 
 /// <summary>
-/// 【開発用】F8 で Play モードを開始、F9 で停止する。
+/// 【開発用】キー1つで Play モードを操作する。
+///
+///   F8         … Play 開始（Play 中は何もしない）
+///   F9         … 一時停止 ⇔ 再開（Play 中でなければ何もしない）
+///   Shift + F9 … Play モードを終了する
+///
+/// ■ 仕組み（Windows）
+///   エディタ側の更新（EditorApplication.update）で、キーボードの状態を直接見ている。
+///   ゲーム側の Update を使わないので、次のどの状態でも同じように効く。
+///     ・Game ビューでプレイ中 ・一時停止中（ゲームの Update が止まっている）
+///     ・Hierarchy や Inspector を触っている時
+///   Unity が一番手前の時だけ反応する（Visual Studio で F9 を押しても反応しない）。
+///
+/// ■ Windows 以外
+///   メニュー「Tools/Playモード/～」のショートカットとして動く
+///   （Game ビューにフォーカスがある時は効かないことがある）。
 ///
 /// ■ 置き場所
-///   「Editor」という名前のフォルダの“外”に置くこと（例：Assets/Script/Dev/）。
-///   Play 中にゲーム側でキーを受け取るため、実行時のスクリプトとして動かす必要がある。
+///   どこでもよい（Editor フォルダでも、それ以外でも）。
 ///   ファイル全体が #if UNITY_EDITOR で囲まれているので、ビルド版には一切含まれない。
 ///
-/// ■ キーの役割（開始と停止を別のキーにしている理由）
-///   F8：開始だけ（Play 中に押しても何もしない）
-///   F9：停止だけ（Play 中でなければ何もしない）
-///   1つのキーで開始・停止を切り替える方式だと、止まるのが遅れた時に
-///   もう一度押して「また再生が始まる」事故が起きるため、役割を分けている。
-///
-/// ■ 停止の仕組み（2段構え）
-///   ① Game ビューにフォーカスがある時（普通にプレイしている時）
-///      → 見えない監視オブジェクトを自動で作り、毎フレーム F9 を監視して停止する。
-///   ② Hierarchy・Inspector など、エディタの他の画面にフォーカスがある時
-///      → メニュー「Tools/Playモードを停止」のショートカット（F9）で停止する。
-///
 /// ■ キーを変えたい時
-///   開始キー     … MenuPlay の「_F8」
-///   停止キー     … MenuStop の「_F9」と、StopKeyCode・StopInputSystemKey の計3か所
-///   （メニューのショートカットは Edit → Shortcuts からも変更できるが、
-///     ①の Game ビュー用の監視キーはこのファイルの定数なので、そちらも合わせて変えること）
+///   Windows … 下の VK_PLAY / VK_PAUSE（仮想キーコード。F1 = 0x70 … F12 = 0x7B）
+///   それ以外 … MenuPlay / MenuPause / MenuExit の「_F8」「_F9」「#_F9」
 /// </summary>
-[AddComponentMenu("")] // コンポーネントの追加メニューには出さない
-public class PlayModeOperationKey : MonoBehaviour
+[InitializeOnLoad]
+public static class PlayModeOperationKey
 {
-    // ---- キーの設定 ----
-    const string MenuPlay = "Tools/Playモードを開始 _F8";
-    const string MenuStop = "Tools/Playモードを停止 _F9";
-
-    // Game ビューで停止を監視するキー（旧 Input / 新 Input System）
-    const KeyCode StopKeyCode = KeyCode.F9;
-#if ENABLE_INPUT_SYSTEM
-    const Key StopInputSystemKey = Key.F9;
+    // ---- メニュー ----
+#if UNITY_EDITOR_WIN
+    // Windows ではキーを直接見るので、メニューにはショートカットを付けない
+    // （付けると、1回押しただけで「一時停止 → すぐ再開」と2回動いてしまう）
+    const string MenuPlay = "Tools/Playモード/開始 (F8)";
+    const string MenuPause = "Tools/Playモード/一時停止・再開 (F9)";
+    const string MenuExit = "Tools/Playモード/終了 (Shift+F9)";
+#else
+    const string MenuPlay = "Tools/Playモード/開始 _F8";
+    const string MenuPause = "Tools/Playモード/一時停止・再開 _F9";
+    const string MenuExit = "Tools/Playモード/終了 #_F9";
 #endif
 
-    // 今動いている監視オブジェクト。
-    // bool のフラグではなく「実物への参照」で二重生成を防ぐ。
-    // （Enter Play Mode Options で Domain Reload を切っていると static の値が次の再生まで残るため、
-    //   bool だと「前回作った」ことだけが残って、2回目以降の再生で監視が作られなくなる。
-    //   参照なら、前回のオブジェクトが破棄されていれば null 扱いになるので正しく作り直せる）
-    static PlayModeOperationKey instance;
-
-    // =========================================================
-    // ① Play 中、Game ビューで押された時
-    // =========================================================
-
-    /// <summary>Play 開始時に、監視用の見えないオブジェクトを自動で作る</summary>
-    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-    static void CreateWatcher()
+    static PlayModeOperationKey()
     {
-        // 【二重生成の防止】すでに動いている監視があれば作らない
-        if (instance != null) return;
-
-        GameObject watcher = new GameObject("[PlayModeOperationKey]");
-
-        // Hierarchy に出さないだけにする（HideAndDontSave は使わない）。
-        // DontSave 系の指定をすると、Play を止めても破棄されずにエディタ側へ残ってしまうことがあるため。
-        // DontDestroyOnLoad のシーンはそもそも保存されないので、保存の心配は無い
-        watcher.hideFlags = HideFlags.HideInHierarchy;
-        DontDestroyOnLoad(watcher); // シーンを切り替えても残す
-
-        instance = watcher.AddComponent<PlayModeOperationKey>();
-    }
-
-    void Update()
-    {
-        // Time.timeScale = 0（リミットブレイクの演出中・ポーズ中）でも Update は動くので止められる
-        if (StopKeyPressed())
-        {
-            StopPlayMode();
-        }
-    }
-
-    void OnDestroy()
-    {
-        if (instance == this) instance = null;
-    }
-
-    static bool StopKeyPressed()
-    {
-#if ENABLE_LEGACY_INPUT_MANAGER
-        if (Input.GetKeyDown(StopKeyCode)) return true;
-#endif
-#if ENABLE_INPUT_SYSTEM
-        Keyboard keyboard = Keyboard.current;
-        if (keyboard != null && keyboard[StopInputSystemKey].wasPressedThisFrame) return true;
-#endif
-        return false;
-    }
-
-    // =========================================================
-    // Play 終了時の後片付け（念のため、監視オブジェクトを確実に消す）
-    // =========================================================
-
-    [InitializeOnLoadMethod]
-    static void RegisterPlayModeCallback()
-    {
+#if UNITY_EDITOR_WIN
         // 二重登録を防ぐため、一度外してから登録する
-        EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
-        EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
-    }
-
-    static void OnPlayModeStateChanged(PlayModeStateChange state)
-    {
-        if (state != PlayModeStateChange.ExitingPlayMode) return;
-
-        if (instance != null)
-        {
-            Destroy(instance.gameObject);
-        }
-        instance = null;
+        EditorApplication.update -= PollKeys;
+        EditorApplication.update += PollKeys;
+#endif
     }
 
     // =========================================================
-    // ② メニュー／ショートカット（エディタの画面にフォーカスがある時）
+    // Windows：キーボードを直接見る
+    // =========================================================
+#if UNITY_EDITOR_WIN
+    [DllImport("user32.dll")]
+    static extern short GetAsyncKeyState(int vKey);
+
+    const int VK_SHIFT = 0x10;
+    const int VK_PLAY = 0x77;  // F8
+    const int VK_PAUSE = 0x78; // F9
+
+    // 前回見た時に押されていたか（押した瞬間だけ反応するため）
+    static bool playWasDown;
+    static bool pauseWasDown;
+
+    static void PollKeys()
+    {
+        bool playDown = IsDown(VK_PLAY);
+        bool pausePressed = PressedNow(VK_PAUSE, pauseWasDown, out bool pauseDown);
+        bool playPressed = playDown && !playWasDown;
+
+        playWasDown = playDown;
+        pauseWasDown = pauseDown;
+
+        // Unity が一番手前でない時（Visual Studio やブラウザを触っている時）は反応しない
+        if (!InternalEditorUtility.isApplicationActive) return;
+
+        if (playPressed)
+        {
+            StartPlay();
+        }
+
+        if (pausePressed)
+        {
+            if (IsDown(VK_SHIFT)) ExitPlay();
+            else TogglePause();
+        }
+    }
+
+    static bool IsDown(int vKey)
+    {
+        return (GetAsyncKeyState(vKey) & 0x8000) != 0;
+    }
+
+    /// <summary>
+    /// 押した瞬間か。
+    /// 押して離すのが速すぎて「押されている瞬間」を見逃しても、
+    /// 「前回から押されたことがある」印（下位ビット）で拾う
+    /// </summary>
+    static bool PressedNow(int vKey, bool wasDown, out bool isDown)
+    {
+        short state = GetAsyncKeyState(vKey);
+        isDown = (state & 0x8000) != 0;
+        bool tappedSinceLast = (state & 0x0001) != 0;
+        return !wasDown && (isDown || tappedSinceLast);
+    }
+#endif
+
+    // =========================================================
+    // メニュー（Windows 以外ではショートカットとして動く）
     // =========================================================
 
     [MenuItem(MenuPlay)]
-    static void PlayFromMenu()
+    static void PlayFromMenu() => StartPlay();
+
+    [MenuItem(MenuPlay, true)]
+    static bool PlayFromMenuValidate() => !EditorApplication.isPlaying;
+
+    [MenuItem(MenuPause)]
+    static void PauseFromMenu() => TogglePause();
+
+    [MenuItem(MenuPause, true)]
+    static bool PauseFromMenuValidate() => EditorApplication.isPlaying;
+
+    [MenuItem(MenuExit)]
+    static void ExitFromMenu() => ExitPlay();
+
+    [MenuItem(MenuExit, true)]
+    static bool ExitFromMenuValidate() => EditorApplication.isPlaying;
+
+    // =========================================================
+    // 操作
+    // =========================================================
+
+    static void StartPlay()
     {
         if (EditorApplication.isPlaying) return;
 
@@ -141,35 +155,21 @@ public class PlayModeOperationKey : MonoBehaviour
         EditorApplication.isPlaying = true;
     }
 
-    // Play 中は開始メニューを灰色にする（F8 を押しても何も起きない）
-    [MenuItem(MenuPlay, true)]
-    static bool PlayFromMenuValidate()
-    {
-        return !EditorApplication.isPlaying;
-    }
-
-    [MenuItem(MenuStop)]
-    static void StopFromMenu()
-    {
-        StopPlayMode();
-    }
-
-    // Play 中でなければ停止メニューを灰色にする（F9 を押しても何も起きない）
-    [MenuItem(MenuStop, true)]
-    static bool StopFromMenuValidate()
-    {
-        return EditorApplication.isPlaying;
-    }
-
-    // =========================================================
-    // 共通
-    // =========================================================
-
-    static void StopPlayMode()
+    static void TogglePause()
     {
         if (!EditorApplication.isPlaying) return;
 
-        Debug.Log("[PlayModeOperationKey] F9 で Play モードを停止しました");
+        EditorApplication.isPaused = !EditorApplication.isPaused;
+        Debug.Log(EditorApplication.isPaused
+            ? "[PlayModeOperationKey] 一時停止しました（F9 で再開 / Shift+F9 で終了）"
+            : "[PlayModeOperationKey] 再開しました");
+    }
+
+    static void ExitPlay()
+    {
+        if (!EditorApplication.isPlaying) return;
+
+        Debug.Log("[PlayModeOperationKey] Play モードを終了しました");
         EditorApplication.isPlaying = false;
     }
 }
