@@ -1,69 +1,278 @@
 # Unity Editor Tools & UI Modules
 
-※本リポジトリはポートフォリオ用途として、公開可能な代表スクリプトのみ掲載しています。
-製品コード全体は守秘・知的財産保護の観点から非公開です。
+Unity / C# を使用したゲーム開発の中で実際に生じた課題を解決するために制作した、
+**Unity Editor拡張・UI制御・開発ワークフロー改善用スクリプト集**です。
 
-本プロジェクトは、Unity開発におけるUI演出・操作性・表示最適化の強化や、
-エディタ上での作業効率化（ワークフロー改善）を目的とした
-6つのカスタムスクリプト群です[cite: 1, 2, 3, 4, 5, 6]。
+本リポジトリはポートフォリオ用途として、公開可能な代表スクリプトのみ掲載しています。
 
-## 収録スクリプト一覧と機能概要
+製品コード全体については、知的財産およびプロジェクト固有情報の保護を目的として非公開としています。
 
-### 1. `UISfHighlightController.cs` (UI演出制御)[cite: 1]
-ボタンの選択時やポインターのホバー時に、動的な視覚エフェクトを追加するUIコンポーネントです[cite: 1]。
-* ボタンの周囲を周回する光の玉（パーティクル）の演出を実装しています[cite: 1]。
-* サイン波の計算を利用して、外周グラフィックの透明度をパルス明滅させ、スケールを微細に拡大・縮小させるアニメーション効果を持っています[cite: 1]。
-* `ISelectHandler` や `IPointerEnterHandler` などのインターフェースを活用し、イベント駆動でハイライトエフェクトの再生・停止を制御します[cite: 1]。
+現在、以下の **8種類のカスタムスクリプト**を収録しています。
 
-### 2. `ButtonColorCopier.cs` (エディタ拡張)[cite: 2]
-Unity UIのボタンに対するコンテキストメニュー（右クリックメニュー）を拡張するエディタ用スクリプトです[cite: 2]。
-* 対象のボタンから `ColorBlock`（Color Tintの設定値）をクリップボードにコピーすることができます[cite: 2]。
-* コピーした色設定のみを、別のボタンへ個別にペーストして適用することが可能です[cite: 2]。
-* ペースト処理には `Undo.RecordObject` が組み込まれており、適用後にCtrl+Zでの取り消し（Undo）に対応しています[cite: 2]。
+---
 
-### 3. PlayModeTransformSaver.cs (エディタ拡張)[cite: 3]
+## 収録スクリプト
 
-Playモード中に調整したオブジェクトのTransform情報を保存し、Editモード復帰後もその状態を維持できる作業効率化ツールです。さらに、Playモード中に新規作成・配置したGameObjectやUIオブジェクトそのものをEditモードへ持ち帰る機能にも対応しています。[cite: 3]
+### 1. `UISfHighlightController.cs`
+### UI選択・ハイライト演出制御
 
-ショートカットキー（%_S）を実行すると、選択中のオブジェクトを一時保存したうえでPlayモードを終了し、Editモード復帰時に自動で状態を復元します。[cite: 3]
-Playモード開始前から存在していた既存オブジェクトについては、Transform の位置・回転・スケールを復元します。Prefabインスタンスの場合は変更内容も記録されます。[cite: 3]
-通常の3Dオブジェクトの Transform だけでなく、UI要素の RectTransform にも対応しており、anchorMin、anchorMax、pivot、anchoredPosition3D、sizeDelta、offsetMin、offsetMax などのレイアウト情報も保存・復元します。[cite: 3]
-Playモード中に新規生成されたオブジェクトは、一時Prefabとして退避され、Editモード復帰後にシーンへ再生成されます。 復元後はPrefabとのリンクを解除し、独立したGameObjectとして扱われます。[cite: 3]
-新規オブジェクトの復元時には名前へ [Restored] を付与し、Playモードから持ち帰ったオブジェクトであることを識別しやすくしています。[cite: 3]
-親子オブジェクトを同時選択した場合は親オブジェクトのみを保存対象とし、子オブジェクトが二重生成される事故を防止しています。[cite: 3]
-保存処理では一時Prefabを使用しますが、復元処理の終了時には一時フォルダを自動削除するため、バックアップ用ファイルがプロジェクト内に残り続けることを防ぎます。[cite: 3]
-既存オブジェクトの判定にはUnity内部の InstanceID を利用し、対象がEditモード復帰後も存在する場合はそのオブジェクトへ直接Transformを再適用します。対象が存在しない場合は、Playモード中に生成された新規オブジェクトと判断し、一時Prefabから復元します。[cite: 3]
-新規オブジェクトを持ち帰る場合、カメラ・プレイヤー・他のシーンオブジェクトなどへの参照が切れる可能性があるため、復元後にConsoleへ警告を表示します。[cite: 3]
+ボタンの選択時やマウスポインターのホバー時に、
+動的な視覚エフェクトを追加するUIコンポーネントです。
 
-### 4. `ButtonColorSyncEditor.cs` (UIカスタムエディタ)[cite: 4]
-ボタンコンポーネントのインスペクターを拡張し、Playモード中にボタンの状態に合わせてテキスト色を自動同期させるスクリプトです[cite: 4]。
-* ボタンの選択状態（Normal、Highlighted、Pressedなど）が変化した際、指定された対象色へ子要素のテキスト色をクロスフェードさせます[cite: 4]。
-* `TextMeshProUGUI` および旧式の `Text` コンポーネントの両方を検知して対応します[cite: 4]。
-* 特定のコンポーネント（`ButtonBlinkHover` や `ButtonTimeOutLock`）がボタンにアタッチされている場合は、競合を避けるために色のエディタ同期処理を自動的にスキップします[cite: 4]。
+- ボタン周囲を周回するパーティクル演出
+- サイン波を利用した透明度のパルスアニメーション
+- UI外周の微細な拡大・縮小演出
+- `ISelectHandler`
+- `IDeselectHandler`
+- `IPointerEnterHandler`
+- `IPointerExitHandler`
 
-### 5. `ImageScaleFilter.cs` (UI画像自動フィット・個別補正)[cite: 5]
-異なる解像度・縦横比を持つキャラクター画像を、指定したUIフレーム内へ自動的に収めるための表示補正コンポーネントです[cite: 5]。
-* `Image` に設定されたSpriteの縦横比と表示フレームのサイズを比較し、アスペクト比を維持したままフレーム内へ自動フィットさせます[cite: 5]。
-* フレームに対する余白率（`framePadding`）を指定できるほか、Sprite名ごとに専用の拡大率（`scaleMultiplier`）と位置補正（`positionOffset`）を登録できます[cite: 5]。
-* 個別倍率を適用した結果がフレームサイズを超える場合は、自動的に倍率を再調整し、画像が表示領域からはみ出さないよう制御します[cite: 5]。
-* 外部スクリプトやUnityEventからSpriteの変更・再計算を行える `SetSprite()` / `Refresh()` を公開しており、動的なキャラクター画像切り替えにも対応しています[cite: 5]。
+などのUnity EventSystemインターフェースを利用し、
+入力方式に応じてハイライトエフェクトを制御します。
 
-### 6. `UIFocusKeeper.cs` (UIフォーカス・入力統合制御)[cite: 6]
-ゲームパッド操作とマウス操作を併用するUIにおいて、選択状態（フォーカス）の不整合や消失を防止するためのUI入力補助コンポーネントです[cite: 6]。
-* マウスでSelectable要素へホバーした際、そのオブジェクトを `EventSystem.currentSelectedGameObject` に設定し、ゲームパッド側の選択状態とマウスホバー状態が別々に表示される問題を防止します[cite: 6]。
-* 指定した複数の親オブジェクト以下に存在する `Selectable` を検索し、ホバー選択用の `HoverToSelect` コンポーネントを自動付与します。動的に生成されたUIに対して再実行することも可能です[cite: 6]。
-* 現在選択されているUIを記憶し、背景クリックなどによって `currentSelectedGameObject` が `null` になった場合でも、直前の有効な選択対象へ自動的にフォーカスを復帰させます[cite: 6]。
-* 非アクティブ化されたUIや `interactable == false` のSelectableにはフォーカスを戻さず、画面遷移や操作不可状態を考慮した安全な再選択処理を行います[cite: 6]。
+---
 
-### 7. `ButtonBlinkLoop.cs`（UI選択演出・アニメーション制御）[cite: 7]
-マウスホバーやキーボード・ゲームパッドによるUI選択状態に応じて、ボタンの色・透明度・拡大縮小などを統合的に制御するUI演出コンポーネントです。[cite: 7]
+### 2. `ButtonColorCopier.cs`
+### Button ColorBlock コピー／ペースト用Editor拡張
 
-- マウスホバーと `EventSystem` による選択状態の両方に対応しており、マウス・キーボード・ゲームパッドのいずれを使用した場合でも同じ選択演出を適用できます。[cite: 7]
-- 選択中はテキストを指定した `warningColor` に変更し、必要に応じて透明度を周期的に変化させる点滅演出を適用します。`useRichEffects` を有効にすると、ボタン本体の `Image` にも同じ色・透明度変化を連動させることができます。[cite: 7]
-- 通常状態では単色表示だけでなく、TextMeshProの `VertexGradient` を使用した4方向グラデーション表示にも対応しています。[cite: 7]
-- 選択・ホバー開始時にはボタン自体を拡大し、解除時には元のサイズへ戻します。拡大・縮小それぞれに個別の `AnimationCurve` を設定でき、EaseInOutだけでなく、オーバーシュートやバウンドなどのイージング表現にも対応しています。[cite: 7]
-- 拡大処理の途中で選択状態が解除された場合でも、現在のサイズを起点として縮小処理へ移行するため、不自然なサイズジャンプを発生させず滑らかに復帰します。[cite: 7]
-- 拡大完了後にボタンをゆっくり伸縮させる「Pulse」演出を任意で有効化でき、選択中のUIを視覚的に強調できます。[cite: 7]
-- アニメーション処理には `Time.unscaledDeltaTime` を使用しているため、ゲーム本編が一時停止中や `Time.timeScale = 0` の状態でもUI演出を継続できます。[cite: 7]
-- `interactable = false` になったボタンは自動的に通常サイズ・通常表示へ復帰し、Unity標準のDisabled表現を妨げないよう制御されています。[cite: 7]
-- `ClassChangeButtonColor()` により実行中に選択色を変更できるほか、`RefreshBaseScale()` を使用することで動的に変更されたボタンサイズを新しい基準サイズとして再登録できます。[cite: 7]
+Unity UIのButtonに対するコンテキストメニューを拡張し、
+`ColorBlock` の設定値を別のButtonへコピーできるEditorツールです。
+
+- Buttonの `ColorBlock` をコピー
+- コピーしたColor設定を別Buttonへ適用
+- Color関連設定のみを個別に転送
+- `Undo.RecordObject` によるUndo対応
+- 大量のUIボタン設定時の反復作業を削減
+
+UIデザイン調整時に発生する、
+同一カラー設定の手動入力を効率化することを目的としています。
+
+---
+
+### 3. `PlayModeTransformSaver.cs`
+### Play Mode中のTransform・GameObject保存ツール
+
+Play Mode中に調整したオブジェクトの状態を保存し、
+Edit Modeへ戻った後も変更内容を維持できるEditor拡張です。
+
+ショートカットキーを実行すると、
+選択中のオブジェクトを一時保存したうえでPlay Modeを終了し、
+Edit Mode復帰後に自動的に状態を復元します。
+
+#### 既存オブジェクト
+
+Play Mode開始前から存在していたGameObjectについて、
+
+- Position
+- Rotation
+- Scale
+
+を保存・復元します。
+
+Prefab Instanceの場合は変更内容も記録されます。
+
+#### RectTransform対応
+
+通常の3D Transformだけでなく、
+Unity UIの `RectTransform` にも対応しています。
+
+以下の情報を保存・復元します。
+
+- `anchorMin`
+- `anchorMax`
+- `pivot`
+- `anchoredPosition3D`
+- `sizeDelta`
+- `offsetMin`
+- `offsetMax`
+
+#### Play Mode中に生成したGameObjectの持ち帰り
+
+Play Mode中に新規作成・配置されたGameObjectは、
+一時Prefabとして退避されます。
+
+Edit Mode復帰後にシーンへ再生成し、
+Prefabとのリンクを解除した独立GameObjectとして復元します。
+
+復元されたオブジェクトには `[Restored]` を付与し、
+Play Modeから持ち帰ったオブジェクトであることを識別できるようにしています。
+
+#### その他の安全対策
+
+- 親子オブジェクト同時選択時は親のみ保存
+- 子オブジェクトの二重生成を防止
+- 一時Prefab保存フォルダを処理終了後に自動削除
+- Unityの `InstanceID` を利用して既存オブジェクトを判定
+- 外部GameObjectへの参照が切れる可能性がある場合はConsoleへ警告
+
+Play Mode上で試行錯誤した配置結果を、
+Edit Modeで再入力する作業を削減するためのツールです。
+
+---
+
+### 4. `ButtonColorSyncEditor.cs`
+### UI Button色・Text色同期制御
+
+Buttonの状態に応じて、
+子要素のText色を自動的に同期させるUI用カスタム制御です。
+
+- Normal
+- Highlighted
+- Pressed
+- Selected
+- Disabled
+
+などのButton状態に応じて、
+指定された色へTextをクロスフェードさせます。
+
+以下のTextコンポーネントへ対応しています。
+
+- `TextMeshProUGUI`
+- Unity標準 `Text`
+
+また、
+
+- `ButtonBlinkHover`
+- `ButtonTimeOutLock`
+
+など特定コンポーネントが存在する場合には、
+演出処理との競合を避けるため自動的に同期処理をスキップします。
+
+---
+
+### 5. `ImageScaleFilter.cs`
+### UI画像自動フィット・個別補正
+
+異なる解像度やアスペクト比を持つSpriteを、
+指定したUIフレーム内へ自動的に収める表示補正コンポーネントです。
+
+- Spriteのアスペクト比を維持した自動フィット
+- UIフレームサイズに応じた自動スケーリング
+- `framePadding` による余白指定
+- Spriteごとの `scaleMultiplier`
+- Spriteごとの `positionOffset`
+- フレーム外へのはみ出し防止
+- 個別倍率適用後の自動再補正
+
+外部スクリプトやUnityEventから利用できる、
+
+- `SetSprite()`
+- `Refresh()`
+
+も公開しており、
+実行中のキャラクター画像変更にも対応しています。
+
+---
+
+### 6. `UIFocusKeeper.cs`
+### マウス・ゲームパッドUIフォーカス統合制御
+
+マウスとゲームパッドを併用するUIにおいて発生する、
+選択状態の不整合やフォーカス消失を防止するコンポーネントです。
+
+- マウスホバー時に対象Selectableへフォーカスを同期
+- `EventSystem.currentSelectedGameObject` を自動更新
+- 指定した親GameObject以下のSelectableを自動検索
+- `HoverToSelect` コンポーネントを自動付与
+- 動的生成されたUIに対する再スキャン
+- 最後に選択されていたUIを記憶
+- 背景クリック等でフォーカスが消失した場合に自動復元
+
+以下の状態ではフォーカスを復元しません。
+
+- 非アクティブなGameObject
+- `interactable == false` のSelectable
+
+画面遷移や操作不可状態を考慮しながら、
+マウスとゲームパッド双方で一貫したUI操作を維持します。
+
+---
+
+### 7. `ButtonBlinkLoop.cs`
+### UI選択演出・アニメーション制御
+
+マウスホバーやキーボード／ゲームパッドによる選択状態に応じて、
+ボタンの色・透明度・スケールを統合的に制御するUI演出コンポーネントです。
+
+- Mouse HoverとEventSystem Selectionの双方に対応
+- マウス・キーボード・ゲームパッドで共通の演出を適用
+- 選択中のText色変更
+- 周期的なAlpha点滅
+- Button Imageへの色・Alpha連動
+- TextMeshPro `VertexGradient` 対応
+- 選択時の拡大アニメーション
+- 選択解除時の縮小アニメーション
+- `AnimationCurve` によるEasing設定
+- Overshoot / Bounce系アニメーション対応
+- 選択途中解除時の自然な縮小遷移
+- 選択中のPulseアニメーション
+- `Time.unscaledDeltaTime` 使用
+
+`Time.timeScale = 0` の状態でもUIアニメーションを継続できます。
+
+また、Buttonが `interactable = false` になった場合には、
+Unity標準のDisabled表現を妨げないよう通常状態へ自動復帰します。
+
+実行時に利用できる、
+
+- `ClassChangeButtonColor()`
+- `RefreshBaseScale()`
+
+も用意しており、
+動的なカラー変更やUIサイズ変更にも対応しています。
+
+---
+
+### 8. `PlayModeOperationKey.cs`
+### Play Mode開始／停止ショートカット
+
+Unity Editor上でのテストプレイを高速化するための
+開発ワークフロー改善ツールです。
+
+デフォルトでは、
+
+- **F8：Play Mode開始**
+- **F9：Play Mode停止**
+
+として動作します。
+
+開始と停止を別キーへ割り当てることで、
+停止処理中の連続入力によって誤ってPlay Modeを再開始する事故を防止しています。
+
+#### Game Viewからの停止
+
+Play Mode開始時に、
+Hierarchyへ表示されない監視用GameObjectを自動生成します。
+
+このオブジェクトがF9入力を監視するため、
+Game Viewを操作中でも即座にPlay Modeを終了できます。
+
+監視オブジェクトには `DontDestroyOnLoad` を適用しているため、
+シーン切り替え後も停止キーを利用できます。
+
+#### Editorウィンドウからの操作
+
+Unityの `MenuItem` ショートカットも併用しており、
+
+- Hierarchy
+- Inspector
+- Scene View
+
+などEditor側へフォーカスがある状態でも、
+F8 / F9によるPlay Mode操作が可能です。
+
+#### Legacy Input / New Input System対応
+
+Game Viewでの停止入力について、
+
+- Legacy Input Manager
+- New Input System
+
+の双方へ対応しています。
+
+#### Time Scale非依存
+
+入力監視には `Update()` を使用しているため、
+
+```csharp
+Time.timeScale = 0;
