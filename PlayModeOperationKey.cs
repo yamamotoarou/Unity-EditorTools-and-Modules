@@ -10,7 +10,9 @@ using System.Runtime.InteropServices;
 /// 【開発用】キー1つで Play モードを操作する。
 ///
 ///   F8         … Play 開始（Play 中は何もしない）
-///   F9         … 一時停止 ⇔ 再開（Play 中でなければ何もしない）
+///   F9         … 一時停止するだけ（一方通行。一時停止中・Play 中でない時は何もしない）
+///                  再開はツールバーの ⏸ ボタンをマウスで押す。
+///                  （キーで再開すると Unity エディタ本体が落ちることがあったため、再開はキーで行わない）
 ///   Shift + F9 … Play モードを終了する
 ///
 /// ■ 仕組み（Windows）
@@ -47,11 +49,11 @@ public static class PlayModeOperationKey
     // Windows ではキーを直接見るので、メニューにはショートカットを付けない
     // （付けると、1回押しただけで「一時停止 → すぐ再開」と2回動いてしまう）
     const string MenuPlay = "Tools/Playモード/開始 (F8)";
-    const string MenuPause = "Tools/Playモード/一時停止・再開 (F9)";
+    const string MenuPause = "Tools/Playモード/一時停止 (F9)";
     const string MenuExit = "Tools/Playモード/終了 (Shift+F9)";
 #else
     const string MenuPlay = "Tools/Playモード/開始 _F8";
-    const string MenuPause = "Tools/Playモード/一時停止・再開 _F9";
+    const string MenuPause = "Tools/Playモード/一時停止 _F9";
     const string MenuExit = "Tools/Playモード/終了 #_F9";
 #endif
 
@@ -107,7 +109,7 @@ public static class PlayModeOperationKey
         else if (pausePressed)
         {
             if (IsDown(VK_SHIFT)) Request(ExitPlay);
-            else Request(TogglePause);
+            else Request(Pause);
         }
     }
 
@@ -141,10 +143,10 @@ public static class PlayModeOperationKey
     static bool PlayFromMenuValidate() => !EditorApplication.isPlaying;
 
     [MenuItem(MenuPause)]
-    static void PauseFromMenu() => Request(TogglePause);
+    static void PauseFromMenu() => Request(Pause);
 
     [MenuItem(MenuPause, true)]
-    static bool PauseFromMenuValidate() => EditorApplication.isPlaying;
+    static bool PauseFromMenuValidate() => EditorApplication.isPlaying && !EditorApplication.isPaused;
 
     [MenuItem(MenuExit)]
     static void ExitFromMenu() => Request(ExitPlay);
@@ -208,14 +210,17 @@ public static class PlayModeOperationKey
         EditorApplication.isPlaying = true;
     }
 
-    static void TogglePause()
+    /// <summary>
+    /// 一時停止するだけ（一方通行）。すでに一時停止中なら何もしない。
+    /// 再開はツールバーの ⏸ ボタンをマウスで押す
+    /// </summary>
+    static void Pause()
     {
         if (!EditorApplication.isPlaying) return;
+        if (EditorApplication.isPaused) return;
 
-        EditorApplication.isPaused = !EditorApplication.isPaused;
-        Debug.Log(EditorApplication.isPaused
-            ? "[PlayModeOperationKey] 一時停止しました（F9 で再開 / Shift+F9 で終了）"
-            : "[PlayModeOperationKey] 再開しました");
+        EditorApplication.isPaused = true;
+        Debug.Log("[PlayModeOperationKey] 一時停止しました（再開はツールバーの ⏸ ボタン / Shift+F9 で終了）");
     }
 
     static void ExitPlay()
