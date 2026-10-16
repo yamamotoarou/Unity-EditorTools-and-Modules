@@ -7,228 +7,272 @@ using System.Runtime.InteropServices;
 #endif
 
 /// <summary>
-/// 【開発用】キー1つで Play モードを操作する。
-///
-///   F8         … Play 開始（Play 中は何もしない）
-///   F9         … 一時停止するだけ（一方通行。一時停止中・Play 中でない時は何もしない）
-///                  再開はツールバーの ⏸ ボタンをマウスで押す。
-///                  （キーで再開すると Unity エディタ本体が落ちることがあったため、再開はキーで行わない）
-///   Shift + F9 … Play モードを終了する
-///
-/// ■ 仕組み（Windows）
-///   エディタ側の更新（EditorApplication.update）で、キーボードの状態を直接見ている。
-///   ゲーム側の Update を使わないので、次のどの状態でも同じように効く。
-///     ・Game ビューでプレイ中 ・一時停止中（ゲームの Update が止まっている）
-///     ・Hierarchy や Inspector を触っている時
-///   Unity が一番手前の時だけ反応する（Visual Studio で F9 を押しても反応しない）。
-///
-/// ■ Windows 以外
-///   メニュー「Tools/Playモード/～」のショートカットとして動く
-///   （Game ビューにフォーカスがある時は効かないことがある）。
-///
-/// ■ 置き場所
-///   どこでもよい（Editor フォルダでも、それ以外でも）。
-///   ファイル全体が #if UNITY_EDITOR で囲まれているので、ビルド版には一切含まれない。
-///
-/// ■ 連打対策
-///   一時停止の切り替えを短い間隔で繰り返すと、Unity エディタ本体が落ちることがある。
-///   そこで次の3つで守っている。
-///     ・前回の操作から CooldownSeconds 秒たつまでは、次の操作を受け付けない
-///     ・操作はその場で行わず、エディタの処理の区切り（EditorApplication.delayCall）まで遅らせる
-///     ・Play の開始・終了の切り替え中や、コンパイル中は何もしない
-///
-/// ■ キーを変えたい時
-///   Windows … 下の VK_PLAY / VK_PAUSE（仮想キーコード。F1 = 0x70 … F12 = 0x7B）
-///   それ以外 … MenuPlay / MenuPause / MenuExit の「_F8」「_F9」「#_F9」
+/// F8: 開始 / F9: 一時停止のみ / Shift+F9: 終了。
+/// 再開はUnityのツールバーから行う。
+/// 遷移・コンパイル中の入力は予約せず破棄する。
+/// 終了後は2秒待ち、F8/F9/Shiftを離してから押し直す。
+/// 既存の同名スクリプトと置き換える。推奨配置: Assets/Editor。
 /// </summary>
 [InitializeOnLoad]
 public static class PlayModeOperationKey
 {
-    // ---- メニュー ----
 #if UNITY_EDITOR_WIN
-    // Windows ではキーを直接見るので、メニューにはショートカットを付けない
-    // （付けると、1回押しただけで「一時停止 → すぐ再開」と2回動いてしまう）
     const string MenuPlay = "Tools/Playモード/開始 (F8)";
     const string MenuPause = "Tools/Playモード/一時停止 (F9)";
     const string MenuExit = "Tools/Playモード/終了 (Shift+F9)";
 #else
     const string MenuPlay = "Tools/Playモード/開始 _F8";
     const string MenuPause = "Tools/Playモード/一時停止 _F9";
-    const string MenuExit = "Tools/Playモード/終了 #_F9";
+    const string MenuExit = "Tools/Playモード/終了 #F9";
 #endif
 
-    // 前回の操作から、この秒数がたつまでは次の操作を受け付けない（連打対策）
-    const double CooldownSeconds = 0.35;
+    const double OperationCooldown = 0.75;
+    const double TransitionCooldown = 2.0;
+    const double ReleaseQuietSeconds = 0.25;
+    const double RequestLifetime = 0.5;
 
-    // 最後に操作した時刻（エディタ起動からの秒数）
-    static double lastOperationTime = -999;
+    enum Operation { None, Play, Pause, Exit }
+    static Operation pending;
+    static double pendingAt;
+    static double blockedUntil;
+    static bool lifecycleTransition;
+    static bool executing;
+    static bool shuttingDown;
+    static bool expectedPlaying;
+    static bool expectedPaused;
 
-    // 操作の予約が入っているか（delayCall に二重に積まないため）
-    static bool operationPending;
+#if UNITY_EDITOR_WIN
+    [DllImport("user32.dll", ExactSpelling = true)]
+    static extern short GetAsyncKeyState(int vKey);
+    const int VK_SHIFT = 0x10;
+    const int VK_PLAY = 0x77;
+    const int VK_PAUSE = 0x78;
+    static bool keysArmed;
+    static double releasedSince = -1;
+#endif
 
     static PlayModeOperationKey()
     {
+        // Domain Reload有効時はここから待ち直す。無効時はイベントで待ち直す。
+        BlockFor(TransitionCooldown);
+        lifecycleTransition = FlagsChanging();
+        EditorApplication.update -= Tick;
+        EditorApplication.update += Tick;
+        EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+        EditorApplication.playModeStateChanged += OnPlayModeChanged;
+        EditorApplication.pauseStateChanged -= OnPauseChanged;
+        EditorApplication.pauseStateChanged += OnPauseChanged;
+        AssemblyReloadEvents.beforeAssemblyReload -= BeforeReload;
+        AssemblyReloadEvents.beforeAssemblyReload += BeforeReload;
+        EditorApplication.quitting -= OnQuitting;
+        EditorApplication.quitting += OnQuitting;
+    }
+
+    static bool FlagsChanging()
+    {
+        return EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode;
+    }
+
+    static bool IsBusy()
+    {
+        return shuttingDown || executing || lifecycleTransition || FlagsChanging() ||
+            EditorApplication.isCompiling || EditorApplication.isUpdating;
+    }
+
+    static bool CanPerform(Operation operation)
+    {
+        if (IsBusy()) return false;
+        switch (operation)
+        {
+            case Operation.Play:
+                return !EditorApplication.isPlaying && !EditorApplication.isPlayingOrWillChangePlaymode;
+            case Operation.Pause:
+                return EditorApplication.isPlaying && !EditorApplication.isPaused;
+            case Operation.Exit:
+                return EditorApplication.isPlaying;
+            default:
+                return false;
+        }
+    }
+
+    static void Tick()
+    {
+        if (!InternalEditorUtility.isApplicationActive || IsBusy())
+        {
+            CancelPending();
+            DisarmKeys();
+            // ビジー解除／フォーカス復帰直後も入力を受け付けない。
+            BlockFor(OperationCooldown);
+            return;
+        }
 #if UNITY_EDITOR_WIN
-        // 二重登録を防ぐため、一度外してから登録する
-        EditorApplication.update -= PollKeys;
-        EditorApplication.update += PollKeys;
+        PollKeys();
 #endif
     }
 
-    // =========================================================
-    // Windows：キーボードを直接見る
-    // =========================================================
 #if UNITY_EDITOR_WIN
-    [DllImport("user32.dll")]
-    static extern short GetAsyncKeyState(int vKey);
-
-    const int VK_SHIFT = 0x10;
-    const int VK_PLAY = 0x77;  // F8
-    const int VK_PAUSE = 0x78; // F9
-
-    // 前回見た時に押されていたか（押した瞬間だけ反応するため）
-    static bool playWasDown;
-    static bool pauseWasDown;
+    static bool IsDown(int key)
+    {
+        // 下位ビット（前回から押された履歴）は信頼できないため使わない。
+        return (GetAsyncKeyState(key) & 0x8000) != 0;
+    }
 
     static void PollKeys()
     {
         bool playDown = IsDown(VK_PLAY);
-        bool pausePressed = PressedNow(VK_PAUSE, pauseWasDown, out bool pauseDown);
-        bool playPressed = playDown && !playWasDown;
-
-        playWasDown = playDown;
-        pauseWasDown = pauseDown;
-
-        // Unity が一番手前でない時（Visual Studio やブラウザを触っている時）は反応しない
-        if (!InternalEditorUtility.isApplicationActive) return;
-
-        if (playPressed)
-        {
-            Request(StartPlay);
-        }
-        else if (pausePressed)
-        {
-            if (IsDown(VK_SHIFT)) Request(ExitPlay);
-            else Request(Pause);
-        }
-    }
-
-    static bool IsDown(int vKey)
-    {
-        return (GetAsyncKeyState(vKey) & 0x8000) != 0;
-    }
-
-    /// <summary>
-    /// 押した瞬間か。
-    /// 押して離すのが速すぎて「押されている瞬間」を見逃しても、
-    /// 「前回から押されたことがある」印（下位ビット）で拾う
-    /// </summary>
-    static bool PressedNow(int vKey, bool wasDown, out bool isDown)
-    {
-        short state = GetAsyncKeyState(vKey);
-        isDown = (state & 0x8000) != 0;
-        bool tappedSinceLast = (state & 0x0001) != 0;
-        return !wasDown && (isDown || tappedSinceLast);
-    }
-#endif
-
-    // =========================================================
-    // メニュー（Windows 以外ではショートカットとして動く）
-    // =========================================================
-
-    [MenuItem(MenuPlay)]
-    static void PlayFromMenu() => Request(StartPlay);
-
-    [MenuItem(MenuPlay, true)]
-    static bool PlayFromMenuValidate() => !EditorApplication.isPlaying;
-
-    [MenuItem(MenuPause)]
-    static void PauseFromMenu() => Request(Pause);
-
-    [MenuItem(MenuPause, true)]
-    static bool PauseFromMenuValidate() => EditorApplication.isPlaying && !EditorApplication.isPaused;
-
-    [MenuItem(MenuExit)]
-    static void ExitFromMenu() => Request(ExitPlay);
-
-    [MenuItem(MenuExit, true)]
-    static bool ExitFromMenuValidate() => EditorApplication.isPlaying;
-
-    // =========================================================
-    // 連打対策：操作の受付
-    // =========================================================
-
-    /// <summary>
-    /// 操作を予約する。
-    /// ・前回から CooldownSeconds 秒たっていなければ捨てる
-    /// ・すでに予約があれば捨てる
-    /// ・実行はエディタの処理の区切り（delayCall）まで遅らせる
-    /// </summary>
-    static void Request(System.Action operation)
-    {
+        bool pauseDown = IsDown(VK_PAUSE);
+        bool shiftDown = IsDown(VK_SHIFT);
         double now = EditorApplication.timeSinceStartup;
-        if (now - lastOperationTime < CooldownSeconds) return;
-        if (operationPending) return;
 
-        lastOperationTime = now;
-        operationPending = true;
-
-        EditorApplication.delayCall += () =>
+        if (now < blockedUntil || pending != Operation.None)
         {
-            operationPending = false;
-            if (IsTransitioning()) return;
-            operation();
-        };
-    }
-
-    /// <summary>
-    /// Play の開始・終了の切り替え中か、コンパイル中か。
-    /// この間に再生状態や一時停止を触ると、エディタが不安定になりやすい
-    /// </summary>
-    static bool IsTransitioning()
-    {
-        // isPlaying と isPlayingOrWillChangePlaymode が食い違う ＝ 開始中・終了中
-        bool changing = EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode;
-        return changing || EditorApplication.isCompiling || EditorApplication.isUpdating;
-    }
-
-    // =========================================================
-    // 操作
-    // =========================================================
-
-    static void StartPlay()
-    {
-        if (EditorApplication.isPlaying) return;
-
-        // スクリプトのコンパイル中に再生すると、古いコードのまま動いてしまうので待ってもらう
-        if (EditorApplication.isCompiling)
-        {
-            Debug.LogWarning("[PlayModeOperationKey] スクリプトのコンパイル中です。終わってからもう一度 F8 を押してください。");
+            DisarmKeys();
             return;
         }
 
-        EditorApplication.isPlaying = true;
-    }
+        // 待機時間終了後、全キーを連続して離したことを確認してから有効化。
+        if (!keysArmed)
+        {
+            if (playDown || pauseDown || shiftDown)
+                releasedSince = -1;
+            else if (releasedSince < 0)
+                releasedSince = now;
+            else if (now - releasedSince >= ReleaseQuietSeconds)
+                keysArmed = true;
+            return;
+        }
 
-    /// <summary>
-    /// 一時停止するだけ（一方通行）。すでに一時停止中なら何もしない。
-    /// 再開はツールバーの ⏸ ボタンをマウスで押す
-    /// </summary>
-    static void Pause()
+        if (!playDown && !pauseDown) return;
+        DisarmKeys();
+        // 同時押しは終了・停止を優先し、開始へ振り替えない。
+        if (pauseDown) Request(shiftDown ? Operation.Exit : Operation.Pause);
+        else if (playDown && !shiftDown) Request(Operation.Play);
+    }
+#endif
+
+    static void DisarmKeys()
     {
-        if (!EditorApplication.isPlaying) return;
-        if (EditorApplication.isPaused) return;
-
-        EditorApplication.isPaused = true;
-        Debug.Log("[PlayModeOperationKey] 一時停止しました（再開はツールバーの ⏸ ボタン / Shift+F9 で終了）");
+#if UNITY_EDITOR_WIN
+        keysArmed = false;
+        releasedSince = -1;
+#endif
     }
 
-    static void ExitPlay()
+    static void BlockFor(double seconds)
     {
-        if (!EditorApplication.isPlaying) return;
-
-        Debug.Log("[PlayModeOperationKey] Play モードを終了しました");
-        EditorApplication.isPlaying = false;
+        blockedUntil = System.Math.Max(blockedUntil, EditorApplication.timeSinceStartup + seconds);
     }
+
+    static void CancelPending()
+    {
+        EditorApplication.delayCall -= ExecutePending;
+        pending = Operation.None;
+    }
+
+    static void Request(Operation operation)
+    {
+        if (!InternalEditorUtility.isApplicationActive ||
+            EditorApplication.timeSinceStartup < blockedUntil ||
+            pending != Operation.None || !CanPerform(operation)) return;
+
+        expectedPlaying = EditorApplication.isPlaying;
+        expectedPaused = EditorApplication.isPaused;
+        pendingAt = EditorApplication.timeSinceStartup;
+        pending = operation;
+        DisarmKeys();
+        // 名前付きコールバックなので、遷移・終了・再コンパイル時に解除できる。
+        EditorApplication.delayCall -= ExecutePending;
+        EditorApplication.delayCall += ExecutePending;
+    }
+
+    static void ExecutePending()
+    {
+        Operation operation = pending;
+        CancelPending();
+        if (operation == Operation.None) return;
+        double now = EditorApplication.timeSinceStartup;
+        if (!InternalEditorUtility.isApplicationActive || now < blockedUntil ||
+            now - pendingAt > RequestLifetime || !CanPerform(operation) ||
+            EditorApplication.isPlaying != expectedPlaying ||
+            EditorApplication.isPaused != expectedPaused) return;
+
+        // プロパティ設定より先にロック。同期的にイベントが来ても再入しない。
+        executing = true;
+        BlockFor(operation == Operation.Pause ? OperationCooldown : TransitionCooldown);
+        DisarmKeys();
+        try
+        {
+            switch (operation)
+            {
+                case Operation.Play:
+                    EditorApplication.isPlaying = true;
+                    break;
+                case Operation.Pause:
+                    EditorApplication.isPaused = true;
+                    break;
+                case Operation.Exit:
+                    EditorApplication.isPlaying = false;
+                    break;
+            }
+        }
+        finally
+        {
+            executing = false;
+        }
+    }
+
+    static void OnPlayModeChanged(PlayModeStateChange state)
+    {
+        CancelPending();
+        DisarmKeys();
+        lifecycleTransition = state == PlayModeStateChange.ExitingEditMode ||
+                              state == PlayModeStateChange.ExitingPlayMode;
+        // EnteredEditModeでも更新。終了要求時ではなく終了完了から2秒確保する。
+        BlockFor(TransitionCooldown);
+    }
+
+    static void OnPauseChanged(PauseState state)
+    {
+        // ツールバーからの一時停止・再開でも古い予約を破棄する。
+        CancelPending();
+        DisarmKeys();
+        BlockFor(OperationCooldown);
+    }
+
+    static void BeforeReload()
+    {
+        shuttingDown = true;
+        Unregister();
+    }
+
+    static void OnQuitting()
+    {
+        shuttingDown = true;
+        Unregister();
+    }
+
+    static void Unregister()
+    {
+        CancelPending();
+        DisarmKeys();
+        EditorApplication.update -= Tick;
+        EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+        EditorApplication.pauseStateChanged -= OnPauseChanged;
+        AssemblyReloadEvents.beforeAssemblyReload -= BeforeReload;
+        EditorApplication.quitting -= OnQuitting;
+    }
+
+    static bool MenuReady(Operation operation)
+    {
+        return pending == Operation.None && EditorApplication.timeSinceStartup >= blockedUntil &&
+            CanPerform(operation);
+    }
+
+    [MenuItem(MenuPlay)] static void PlayFromMenu() => Request(Operation.Play);
+    [MenuItem(MenuPause)] static void PauseFromMenu() => Request(Operation.Pause);
+    [MenuItem(MenuExit)] static void ExitFromMenu() => Request(Operation.Exit);
+    [MenuItem(MenuPlay, true)] static bool PlayFromMenuValidate() => MenuReady(Operation.Play);
+    [MenuItem(MenuPause, true)] static bool PauseFromMenuValidate() => MenuReady(Operation.Pause);
+    [MenuItem(MenuExit, true)] static bool ExitFromMenuValidate() => MenuReady(Operation.Exit);
 }
 #endif
